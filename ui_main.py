@@ -64,7 +64,11 @@ class MainWindow(QtWidgets.QMainWindow):
         layout.setSpacing(12)
         layout.addWidget(splitter, 1)
 
-        self.resize(1200, 600)
+        # No need to preset a size; we'll go fullscreen on show.
+        # self.resize(1200, 600)
+
+        # Guard to run fullscreen logic once
+        self._fullscreen_initialized = False
 
     def bind_streams(self, front_worker, back_worker):
         front_worker.frameReady.connect(self.front_view.show_frame)
@@ -72,3 +76,26 @@ class MainWindow(QtWidgets.QMainWindow):
 
         back_worker.frameReady.connect(self.back_view.show_frame)
         back_worker.statusChanged.connect(self.back_view.set_status)
+
+    def showEvent(self, e: QtGui.QShowEvent) -> None:
+        super().showEvent(e)
+        if self._fullscreen_initialized:
+            return
+
+        # Try to find a 1920x1080 monitor
+        target_screen = None
+        for s in QtGui.QGuiApplication.screens():
+            if s.geometry().size() == QtCore.QSize(1920, 1080):
+                target_screen = s
+                break
+
+        # Fallback: use the primary screen
+        if target_screen is None:
+            target_screen = QtGui.QGuiApplication.primaryScreen()
+
+        # Move the window to the top-left of the target screen and go fullscreen
+        geo = target_screen.geometry()
+        self.move(geo.topLeft())
+        self.showFullScreen()
+
+        self._fullscreen_initialized = True
