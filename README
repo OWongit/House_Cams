@@ -1,0 +1,56 @@
+# UniFi Dual-Cam RTSP GUI (Tkinter)
+
+A lightweight **Tkinter** GUI that displays two UniFi Protect camera streams side-by-side (equal widths, no draggable divider) with a local-time overlay in the top-right of each stream. The app uses the UniFi Protect Integration API to fetch **RTSPS** URLs, converts them to plain **RTSP**, and plays them via OpenCV.
+
+## Features
+- Two camera views (front & back) shown **side-by-side**, always equal in size
+- Local time overlay on each stream
+- Low-latency “latest-frame” rendering (drop-frame display loop)
+- Resilient reconnect on signal loss
+- Clean shutdown (ESC to quit)
+
+## Requirements
+- Python 3.9+ recommended
+- Accessible UniFi Protect Console on your LAN
+- Valid API Key with UniFi Protect integration permissions
+- Two camera IDs (as provided in your `KEYS.py`)
+- **Tkinter** is bundled with Python on most platforms (Linux may require `python3-tk`)
+
+### Install dependencies
+```bash
+python -m venv .venv
+source .venv/bin/activate  # on Windows: .venv\Scripts\activate
+pip install -r requirements.txt
+```
+
+## Configuration
+Create or edit `KEYS.py`:
+
+```python
+# KEYS.py
+keys = {
+    "API_KEY": "YOUR_API_KEY_HERE",
+    "CONSOLE_IP": "YOUR_CONSOLE_IP_HERE",
+    "BACK_CAMERA": "YOUR_CAM_ID_HERE",
+    "FRONT_CAMERA": "YOUR_CAM_ID_HERE"
+}
+```
+
+## Run
+```bash
+python main.py
+```
+If the UI shows **“No Signal”**, it’s connecting/reconnecting. Verify your console IP, API key, and that Protect allows the selected stream quality (default is `high` in `main.py`).
+
+## Notes
+- The local Protect HTTPS call disables TLS verification (self-signed certs are common on LAN).
+- Converts **rtsps** (SRTP, port 7441) → **rtsp** (TCP/UDP, port 7447).
+- OpenCV/FFmpeg handles RTSP; a wired connection often reduces latency.
+
+## requirements.txt
+```txt
+Pillow>=10.0
+opencv-python>=4.8
+requests>=2.31
+urllib3>=2.0
+```
