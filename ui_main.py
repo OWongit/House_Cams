@@ -7,6 +7,7 @@ class VideoView(tk.Frame):
         super().__init__(parent, bg="#000000")
         self._last_frame = None   # PIL.Image
         self._photo = None        # ImageTk.PhotoImage ref to avoid GC
+        self._has_new = False     # mark when a worker has provided a new frame
 
         # Title
         title_lbl = tk.Label(self, text=title, font=("Segoe UI", 11, "bold"))
@@ -21,15 +22,22 @@ class VideoView(tk.Frame):
         self.status = tk.Label(self, text=" ", fg="#999")
         self.status.pack(anchor="w", padx=6, pady=(0, 6))
 
-        # Re-render the last frame on resize to keep aspect ratio
-        self.canvas.bind("<Configure>", lambda e: self._render())
+        # On resize, re-render only if there's something new to show
+        self.canvas.bind("<Configure>", lambda e: self.render_if_new())
 
     def set_status(self, text: str):
         self.status.config(text=text)
 
-    def show_frame(self, img_pil: Image.Image):
+    # Called from worker thread: DO NOT touch Tk objects here
+    def update_latest_frame(self, img_pil: Image.Image):
         self._last_frame = img_pil
-        self._render()
+        self._has_new = True
+
+    # Called on Tk thread by a periodic ticker
+    def render_if_new(self):
+        if self._has_new:
+            self._render()
+            self._has_new = False
 
     def _render(self):
         if self._last_frame is None:
@@ -49,15 +57,12 @@ class VideoView(tk.Frame):
         self._photo = ImageTk.PhotoImage(resized)
         self.canvas.config(image=self._photo, text="")  # remove "No Signal" text
 
+
 class MainWindow:
     def __init__(self, root: tk.Tk):
         self.root = root
         self.root.configure(bg="#0e0e0e")
         self.root.minsize(800, 450)
-
-        # Horizontal splitter
-        self.split = ttk.Panedwindow(self.root, orient=tk.HORIZONTAL)
-        self.split.pack(fill="both", expand=True, padx=10, pady=10)
 
         style = ttk.Style(self.root)
         try:
@@ -65,30 +70,41 @@ class MainWindow:
         except Exception:
             pass
 
-        self.left_frame  = ttk.Frame(self.split)
-        self.right_frame = ttk.Frame(self.split)
+        # Container using grid to enforce equal-width columns (no draggable sash)
+        self.container = ttk.Frame(self.root)
+        self.container.pack(fill="both", expand=True, padx=10, pady=10)
 
-        self.split.add(self.left_frame, weight=1)
-        self.split.add(self.right_frame, weight=1)
+        # Make two columns share space equally at all times
+        self.container.grid_columnconfigure(0, weight=1, uniform="cols")
+        self.container.grid_columnconfigure(1, weight=1, uniform="cols")
+        self.container.grid_rowconfigure(0, weight=1)
 
-        self.front_view = VideoView(self.left_frame,  "Front Camera")
-        self.back_view  = VideoView(self.right_frame, "Back Camera")
+        self.front_view = VideoView(self.container,  "Front Camera")
+        self.back_view  = VideoView(self.container,  "Back Camera")
 
-        self.front_view.pack(fill="both", expand=True)
-        self.back_view.pack(fill="both", expand=True)
+        # Place views side-by-side with equal sizing
+        self.front_view.grid(row=0, column=0, sticky="nsew")
+        self.back_view.grid(row=0, column=1, sticky="nsew")
+
+        # periodic repaint for drop-frame display (no backlog)
+        self._frame_interval_ms = 33  # ~30 FPS
+        self.root.after(self._frame_interval_ms, self._tick)
 
         self._fullscreen_initialized = False
 
+    def _tick(self):
+        self.front_view.render_if_new()
+        self.back_view.render_if_new()
+        self.root.after(self._frame_interval_ms, self._tick)
+
     def bind_streams(self, front_worker, back_worker):
-        # Ensure UI updates run on the Tk thread
-        def safe_call(fn):
-            return lambda *a, **k: self.root.after(0, fn, *a, **k)
+        # For frames: write-only from worker thread (no Tk calls)
+        front_worker.on_frame  = self.front_view.update_latest_frame
+        back_worker.on_frame   = self.back_view.update_latest_frame
 
-        front_worker.on_frame  = safe_call(self.front_view.show_frame)
-        front_worker.on_status = safe_call(self.front_view.set_status)
-
-        back_worker.on_frame   = safe_call(self.back_view.show_frame)
-        back_worker.on_status  = safe_call(self.back_view.set_status)
+        # For status: schedule on Tk thread
+        front_worker.on_status = lambda s: self.root.after(0, self.front_view.set_status, s)
+        back_worker.on_status  = lambda s: self.root.after(0, self.back_view.set_status, s)
 
     def show(self):
         # Fullscreen to mimic the Qt app's behavior
