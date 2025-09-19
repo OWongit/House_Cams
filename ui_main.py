@@ -1,101 +1,101 @@
-from PyQt6 import QtCore, QtGui, QtWidgets
+import tkinter as tk
+from tkinter import ttk
+from PIL import Image, ImageTk
 
-class VideoView(QtWidgets.QWidget):
-    def __init__(self, title: str = "Camera", parent=None):
-        super().__init__(parent)
-        self.title = title
-        self.label = QtWidgets.QLabel("No Signal", self)
-        self.label.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
-        self.label.setMinimumSize(320, 240)
-        self.label.setStyleSheet("background:#111; color:#888; border:1px solid #333;" )
+class VideoView(tk.Frame):
+    def __init__(self, parent, title: str = "Camera"):
+        super().__init__(parent, bg="#000000")
+        self._last_frame = None   # PIL.Image
+        self._photo = None        # ImageTk.PhotoImage ref to avoid GC
 
-        self.status = QtWidgets.QLabel(" ", self)
-        self.status.setStyleSheet("color:#999; font-size: 11px;")
+        # Title
+        title_lbl = tk.Label(self, text=title, font=("Segoe UI", 11, "bold"))
+        title_lbl.pack(anchor="w", padx=6, pady=(6, 0))
 
-        title_lbl = QtWidgets.QLabel(title, self)
-        title_lbl.setStyleSheet("font-weight:600;" )
+        # Video area
+        self.canvas = tk.Label(self, text="No Signal", fg="#888", bg="#111",
+                               width=40, height=10, bd=1, relief="solid")
+        self.canvas.pack(fill="both", expand=True, padx=6, pady=6)
 
-        layout = QtWidgets.QVBoxLayout(self)
-        layout.setContentsMargins(6,6,6,6)
-        layout.setSpacing(6)
-        layout.addWidget(title_lbl)
-        layout.addWidget(self.label, 1)
-        layout.addWidget(self.status)
+        # Status
+        self.status = tk.Label(self, text=" ", fg="#999")
+        self.status.pack(anchor="w", padx=6, pady=(0, 6))
 
-    def show_frame(self, qimg: QtGui.QImage):
-        # Scale while keeping aspect ratio
-        pix = QtGui.QPixmap.fromImage(qimg)
-        target_size = self.label.size()
-        if target_size.width() > 0 and target_size.height() > 0:
-            pix = pix.scaled(target_size, QtCore.Qt.AspectRatioMode.KeepAspectRatio,
-                             QtCore.Qt.TransformationMode.SmoothTransformation)
-        self.label.setPixmap(pix)
-
-    def resizeEvent(self, e: QtGui.QResizeEvent):
-        # Trigger a redraw scale
-        if self.label.pixmap():
-            self.show_frame(self.label.pixmap().toImage())
-        super().resizeEvent(e)
+        # Re-render the last frame on resize to keep aspect ratio
+        self.canvas.bind("<Configure>", lambda e: self._render())
 
     def set_status(self, text: str):
-        self.status.setText(text)
+        self.status.config(text=text)
 
+    def show_frame(self, img_pil: Image.Image):
+        self._last_frame = img_pil
+        self._render()
 
-class MainWindow(QtWidgets.QMainWindow):
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setWindowTitle("UniFi Dual-Cam Viewer")
-        central = QtWidgets.QWidget(self)
-        self.setCentralWidget(central)
+    def _render(self):
+        if self._last_frame is None:
+            return
+        w = self.canvas.winfo_width()
+        h = self.canvas.winfo_height()
+        if w <= 2 or h <= 2:
+            return
 
-        self.front_view = VideoView("Front Camera")
-        self.back_view  = VideoView("Back Camera")
+        # Keep aspect ratio
+        img_w, img_h = self._last_frame.size
+        scale = min(w / img_w, h / img_h)
+        new_w = max(1, int(img_w * scale))
+        new_h = max(1, int(img_h * scale))
+        resized = self._last_frame.resize((new_w, new_h), Image.LANCZOS)
 
-        # Use a horizontal splitter so the user can resize the two feeds
-        splitter = QtWidgets.QSplitter(QtCore.Qt.Orientation.Horizontal, central)
-        splitter.addWidget(self.front_view)
-        splitter.addWidget(self.back_view)
-        splitter.setChildrenCollapsible(False)
-        splitter.setStretchFactor(0, 1)
-        splitter.setStretchFactor(1, 1)
+        self._photo = ImageTk.PhotoImage(resized)
+        self.canvas.config(image=self._photo, text="")  # remove "No Signal" text
 
-        layout = QtWidgets.QVBoxLayout(central)
-        layout.setContentsMargins(10,10,10,10)
-        layout.setSpacing(12)
-        layout.addWidget(splitter, 1)
+class MainWindow:
+    def __init__(self, root: tk.Tk):
+        self.root = root
+        self.root.configure(bg="#0e0e0e")
+        self.root.minsize(800, 450)
 
-        # No need to preset a size; we'll go fullscreen on show.
-        # self.resize(1200, 600)
+        # Horizontal splitter
+        self.split = ttk.Panedwindow(self.root, orient=tk.HORIZONTAL)
+        self.split.pack(fill="both", expand=True, padx=10, pady=10)
 
-        # Guard to run fullscreen logic once
+        style = ttk.Style(self.root)
+        try:
+            style.theme_use("clam")
+        except Exception:
+            pass
+
+        self.left_frame  = ttk.Frame(self.split)
+        self.right_frame = ttk.Frame(self.split)
+
+        self.split.add(self.left_frame, weight=1)
+        self.split.add(self.right_frame, weight=1)
+
+        self.front_view = VideoView(self.left_frame,  "Front Camera")
+        self.back_view  = VideoView(self.right_frame, "Back Camera")
+
+        self.front_view.pack(fill="both", expand=True)
+        self.back_view.pack(fill="both", expand=True)
+
         self._fullscreen_initialized = False
 
     def bind_streams(self, front_worker, back_worker):
-        front_worker.frameReady.connect(self.front_view.show_frame)
-        front_worker.statusChanged.connect(self.front_view.set_status)
+        # Ensure UI updates run on the Tk thread
+        def safe_call(fn):
+            return lambda *a, **k: self.root.after(0, fn, *a, **k)
 
-        back_worker.frameReady.connect(self.back_view.show_frame)
-        back_worker.statusChanged.connect(self.back_view.set_status)
+        front_worker.on_frame  = safe_call(self.front_view.show_frame)
+        front_worker.on_status = safe_call(self.front_view.set_status)
 
-    def showEvent(self, e: QtGui.QShowEvent) -> None:
-        super().showEvent(e)
-        if self._fullscreen_initialized:
-            return
+        back_worker.on_frame   = safe_call(self.back_view.show_frame)
+        back_worker.on_status  = safe_call(self.back_view.set_status)
 
-        # Try to find a 1920x1080 monitor
-        target_screen = None
-        for s in QtGui.QGuiApplication.screens():
-            if s.geometry().size() == QtCore.QSize(1920, 1080):
-                target_screen = s
-                break
-
-        # Fallback: use the primary screen
-        if target_screen is None:
-            target_screen = QtGui.QGuiApplication.primaryScreen()
-
-        # Move the window to the top-left of the target screen and go fullscreen
-        geo = target_screen.geometry()
-        self.move(geo.topLeft())
-        self.showFullScreen()
-
-        self._fullscreen_initialized = True
+    def show(self):
+        # Fullscreen to mimic the Qt app's behavior
+        if not self._fullscreen_initialized:
+            try:
+                self.root.attributes("-fullscreen", True)
+            except Exception:
+                # Fallback to maximize if fullscreen not supported
+                self.root.state("zoomed")
+            self._fullscreen_initialized = True

@@ -1,24 +1,35 @@
-from PyQt6 import QtCore, QtGui
-import cv2
-import datetime
+import threading
 import time
+import datetime
+import cv2
+import numpy as np
+from PIL import Image
 
-class VideoStreamWorker(QtCore.QThread):
-    frameReady = QtCore.pyqtSignal(QtGui.QImage)
-    statusChanged = QtCore.pyqtSignal(str)
+class VideoStreamWorker(threading.Thread):
+    """OpenCV-based RTSP reader with reconnect/backoff and timestamp overlay.
+    Emits frames via a callable 'on_frame' (PIL.Image) and status via 'on_status' (str).
+    Safe for use with Tkinter when UI updates are scheduled back onto the main thread.
+    """
 
-    def __init__(self, rtsp_url: str, parent=None, name: str = "Camera"):
-        super().__init__(parent)
+    def __init__(self, rtsp_url: str, name: str = "Camera", on_frame=None, on_status=None):
+        super().__init__(daemon=True)
         self.rtsp_url = rtsp_url
         self.name = name
+        self.on_frame = on_frame
+        self.on_status = on_status
         self._stopping = False
         self._cap = None
         self._last_status = ""
 
+    # ---- helpers ----
     def _emit_status(self, msg: str):
         if msg != self._last_status:
             self._last_status = msg
-            self.statusChanged.emit(msg)
+            if callable(self.on_status):
+                try:
+                    self.on_status(msg)
+                except Exception:
+                    pass
 
     def _open(self):
         if self._cap:
@@ -26,18 +37,59 @@ class VideoStreamWorker(QtCore.QThread):
                 self._cap.release()
             except Exception:
                 pass
-        # Use FFmpeg backend (default in many OpenCV builds)
         self._cap = cv2.VideoCapture(self.rtsp_url)
-        # Reduce buffering for lower latency
+        # Reduce buffering for lower latency, best-effort
         try:
             self._cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
         except Exception:
             pass
 
+    def _overlay_timestamp(self, frame_bgr):
+        """Draw a semi-transparent bg box + white timestamp at top-right."""
+        now_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        h, w = frame_bgr.shape[:2]
+
+        font = cv2.FONT_HERSHEY_SIMPLEX
+        font_scale = 0.5
+        thickness = 1
+
+        (text_w, text_h), baseline = cv2.getTextSize(now_str, font, font_scale, thickness)
+        margin = 10
+
+        x2 = w - margin
+        y1 = margin
+        x1 = x2 - text_w - 2 * margin
+        y2 = y1 + text_h + baseline + margin
+
+        # ensure bounds
+        x1 = max(0, x1)
+        y1 = max(0, y1)
+
+        # overlay box
+        overlay = frame_bgr.copy()
+        cv2.rectangle(overlay, (x1, y1), (x2, y2), (0, 0, 0), -1)
+        # blend for semi-transparency
+        alpha = 0.5
+        cv2.addWeighted(overlay, alpha, frame_bgr, 1 - alpha, 0, frame_bgr)
+
+        # text
+        text_x = x2 - text_w - margin
+        text_y = y1 + text_h + (margin // 2)
+        cv2.putText(frame_bgr, now_str, (text_x, text_y), font, font_scale, (255, 255, 255), thickness, cv2.LINE_AA)
+
+        return frame_bgr
+
+    # ---- thread main loop ----
     def run(self):
         backoff = 0.5
         while not self._stopping:
             if self._cap is None or not self._cap.isOpened():
+                if not self.rtsp_url:
+                    # no URL, idle politely
+                    self._emit_status(f"{self.name}: no URL configured")
+                    time.sleep(0.5)
+                    continue
+
                 self._emit_status(f"{self.name}: connecting …")
                 self._open()
                 if not self._cap.isOpened():
@@ -52,7 +104,6 @@ class VideoStreamWorker(QtCore.QThread):
             ok, frame = self._cap.read()
             if not ok or frame is None:
                 self._emit_status(f"{self.name}: lost signal; reconnecting …")
-                # Force reopen on next loop
                 try:
                     self._cap.release()
                 except Exception:
@@ -61,43 +112,21 @@ class VideoStreamWorker(QtCore.QThread):
                 time.sleep(0.25)
                 continue
 
-            # Convert BGR -> RGB
+            # overlay timestamp
+            frame = self._overlay_timestamp(frame)
+
+            # BGR -> RGB and to PIL.Image
             rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            h, w, ch = rgb.shape
-            bytes_per_line = ch * w
-            qimg = QtGui.QImage(rgb.data, w, h, bytes_per_line, QtGui.QImage.Format.Format_RGB888)
+            pil_img = Image.fromarray(rgb)
 
-            # Paint timestamp on top-right
-            qimg = qimg.copy()
-            painter = QtGui.QPainter(qimg)
-            painter.setRenderHint(QtGui.QPainter.RenderHint.TextAntialiasing, True)
-
-            # Semi-transparent background rectangle for readability
-            now_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            font = QtGui.QFont("Monospace", 12)
-            font.setStyleHint(QtGui.QFont.StyleHint.Monospace)
-            painter.setFont(font)
-
-            metrics = QtGui.QFontMetrics(font)
-            text_width = metrics.horizontalAdvance(now_str)
-            text_height = metrics.height()
-            margin = 10
-            rect = QtCore.QRect(qimg.width() - text_width - 2*margin - 2, margin,
-                                text_width + 2*margin, text_height + margin//2)
-
-            bg = QtGui.QColor(0, 0, 0, 128)
-            fg = QtGui.QColor(255, 255, 255)
-            painter.fillRect(rect, bg)
-            painter.setPen(fg)
-            painter.drawText(rect.adjusted(margin, 0, -margin, 0),
-                             QtCore.Qt.AlignmentFlag.AlignVCenter | QtCore.Qt.AlignmentFlag.AlignRight,
-                             now_str)
-            painter.end()
-
-            self.frameReady.emit(qimg)
+            if callable(self.on_frame):
+                try:
+                    self.on_frame(pil_img)
+                except Exception:
+                    pass
 
             # small sleep to be nice on CPU if stream is very fast
-            QtCore.QThread.msleep(5)
+            time.sleep(0.005)
 
     def stop(self):
         self._stopping = True
@@ -106,4 +135,3 @@ class VideoStreamWorker(QtCore.QThread):
                 self._cap.release()
         except Exception:
             pass
-        self.wait(1000)

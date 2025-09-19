@@ -1,15 +1,28 @@
 import sys
-import tkinter as tk
+from PyQt6 import QtWidgets, QtCore, QtGui
 from KEYS import keys
 from helper import fetch_stream_url, rtsps_to_rtsp
-from streaming import VideoStreamWorker
-from ui_main import MainWindow
+from streaming1 import VideoStreamWorker
+from ui_main1 import MainWindow
 
 QUALITY = "high"  # 'high' | 'medium' | 'low'
 
 def main():
-    root = tk.Tk()
-    root.title("UniFi Dual-Cam Viewer (Tkinter)")
+    # DPI-friendly defaults:
+    # Qt6 enables high-DPI scaling automatically, but keep robust across versions.
+    try:
+        QtWidgets.QApplication.setAttribute(QtCore.Qt.ApplicationAttribute.AA_UseHighDpiPixmaps, True)
+    except Exception:
+        pass
+    try:
+        # Available in Qt 6.5+: avoid blurry scaling on Windows multi-monitor
+        QtGui.QGuiApplication.setHighDpiScaleFactorRoundingPolicy(
+            QtCore.Qt.HighDpiScaleFactorRoundingPolicy.PassThrough
+        )
+    except Exception:
+        pass
+
+    app = QtWidgets.QApplication(sys.argv)
 
     front_id = keys.get("FRONT_CAMERA")
     back_id  = keys.get("BACK_CAMERA")
@@ -30,14 +43,13 @@ def main():
         front_rtsp = ""
         back_rtsp  = ""
 
-    win = MainWindow(root)
-    win.show()  # go fullscreen like the Qt app
+    win = MainWindow()
+    win.show()
 
     # start workers
     front_worker = VideoStreamWorker(front_rtsp, name="Front")
     back_worker  = VideoStreamWorker(back_rtsp,  name="Back")
 
-    # wire callbacks to update the UI in the Tk thread
     win.bind_streams(front_worker, back_worker)
 
     # Only start if URL is non-empty
@@ -48,20 +60,11 @@ def main():
 
     # Ensure threads stop on close
     def on_close():
-        try:
-            front_worker.stop()
-            back_worker.stop()
-            # join briefly to allow clean shutdowns
-            front_worker.join(timeout=1.0)
-            back_worker.join(timeout=1.0)
-        finally:
-            root.destroy()
+        front_worker.stop()
+        back_worker.stop()
 
-    root.protocol("WM_DELETE_WINDOW", on_close)
-    # allow ESC to exit quickly
-    root.bind("<Escape>", lambda e: on_close())
-
-    root.mainloop()
+    app.aboutToQuit.connect(on_close)
+    sys.exit(app.exec())
 
 if __name__ == "__main__":
     main()
