@@ -1,66 +1,83 @@
-#!/usr/bin/env python3
-import sys
-import gi
+import cv2
+import numpy as np
 
-gi.require_version("Gtk", "3.0")
-gi.require_version("Gst", "1.0")
+# high qual
+# rtsp_1 = "rtsps://192.168.1.1:7441/QcDlLIyfGCk792gp?enableSrtp"
+# rtsp_2 = "rtsps://192.168.1.1:7441/lCXwveVuD96xmXcX?enableSrtp"
 
-from gi.repository import Gtk, Gst, Gio
+# low qual
+rtsp_1 = "rtsps://192.168.1.1:7441/jDhFy9De5o41cpFH?enableSrtp"
+rtsp_2 = "rtsps://192.168.1.1:7441/9GLfkjp10gO3LCTv?enableSrtp"
 
-from KEYS import keys
-from helper import fetch_stream_url, rtsps_to_rtsp
-from streaming import PlayerController
-from ui_main import MainWindow
+cap1 = cv2.VideoCapture(rtsp_1)
+cap2 = cv2.VideoCapture(rtsp_2)
 
-QUALITY = "high"  # 'high' | 'medium' | 'low'
+if not cap1.isOpened():
+    print("Error: Could not open stream 1.")
+if not cap2.isOpened():
+    print("Error: Could not open stream 2.")
+if not (cap1.isOpened() or cap2.isOpened()):
+    raise SystemExit
 
-class App(Gtk.Application):
-    def __init__(self):
-        super().__init__(application_id="com.example.dualcam", flags=Gio.ApplicationFlags.FLAGS_NONE)
+window = "Dual RTSP"
+cv2.namedWindow(window, cv2.WINDOW_NORMAL)
+cv2.setWindowProperty(window, cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
 
-    def do_activate(self):
-        # Fetch camera IDs
-        front_id = keys.get("FRONT_CAMERA")
-        back_id  = keys.get("BACK_CAMERA")
+# Target height for each pane (adjust if you like)
+TARGET_H = 720
+FONT = cv2.FONT_HERSHEY_SIMPLEX
 
-        if not front_id or not back_id:
-            print("FRONT_CAMERA and BACK_CAMERA must be set in KEYS.py")
-            win = MainWindow(self)
-            win.show_all()
-            return
 
-        # Fetch RTSPS and convert to RTSP
-        try:
-            front_rtsps = fetch_stream_url(front_id, quality=QUALITY)
-            back_rtsps  = fetch_stream_url(back_id,  quality=QUALITY)
+def resize_keep_aspect(img, target_h):
+    h, w = img.shape[:2]
+    scale = target_h / float(h)
+    new_w = max(1, int(w * scale))
+    return cv2.resize(img, (new_w, target_h), interpolation=cv2.INTER_AREA)
 
-            front_rtsp = rtsps_to_rtsp(front_rtsps)
-            back_rtsp  = rtsps_to_rtsp(back_rtsps)
-        except Exception as e:
-            print("Failed to fetch/convert camera URLs:", e)
-            front_rtsp = ""
-            back_rtsp  = ""
 
-        win = MainWindow(self)
+def no_signal(width, height, label):
+    slate = np.zeros((height, width, 3), dtype=np.uint8)
+    text = f"{label}: No signal"
+    (tw, th), _ = cv2.getTextSize(text, FONT, 1.0, 2)
+    cv2.putText(slate, text, ((width - tw) // 2, (height + th) // 2), FONT, 1.0, (255, 255, 255), 2, cv2.LINE_AA)
+    return slate
 
-        # Setup players
-        front_player = PlayerController(win.front_view.get_sink(), name="Front", status_cb=win.front_view.set_status)
-        back_player  = PlayerController(win.back_view.get_sink(),  name="Back",  status_cb=win.back_view.set_status)
 
-        win.bind_streams(front_player, back_player)
-        win.show_all()
+last1, last2 = None, None
 
-        if front_rtsp:
-            front_player.set_uri(front_rtsp)
-            front_player.play()
-        if back_rtsp:
-            back_player.set_uri(back_rtsp)
-            back_player.play()
+while True:
+    ok1, f1 = cap1.read()
+    ok2, f2 = cap2.read()
 
-def main():
-    app = App()
-    rc = app.run(sys.argv)
-    sys.exit(rc)
+    if ok1:
+        last1 = f1
+    if ok2:
+        last2 = f2
 
-if __name__ == "__main__":
-    main()
+    # If neither stream can provide a frame, bail
+    if last1 is None and last2 is None:
+        print("Error: Neither stream is providing frames.")
+        break
+
+    # Prepare frames (or slates) at a common height
+    if last1 is None:
+        f1r = resize_keep_aspect(no_signal(640, TARGET_H, "Stream 1"), TARGET_H)
+    else:
+        f1r = resize_keep_aspect(last1, TARGET_H)
+
+    if last2 is None:
+        f2r = resize_keep_aspect(no_signal(640, TARGET_H, "Stream 2"), TARGET_H)
+    else:
+        f2r = resize_keep_aspect(last2, TARGET_H)
+
+    # Concatenate side-by-side
+    combined = cv2.hconcat([f1r, f2r])
+
+    cv2.imshow(window, combined)
+    key = cv2.waitKey(1) & 0xFF
+    if key in (ord("q"), 27):  # q or ESC
+        break
+
+cap1.release()
+cap2.release()
+cv2.destroyAllWindows()
