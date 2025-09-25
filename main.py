@@ -1,83 +1,67 @@
 import cv2
-import numpy as np
+import time
+from datetime import datetime
 
-# high qual
-# rtsp_1 = "rtsps://192.168.1.1:7441/QcDlLIyfGCk792gp?enableSrtp"
-# rtsp_2 = "rtsps://192.168.1.1:7441/lCXwveVuD96xmXcX?enableSrtp"
+# Replace with your RTSP stream URL
+rtsp_url = "rtsps://192.168.1.1:7441/jDhFy9De5o41cpFH?enableSrtp"
 
-# low qual
-rtsp_1 = "rtsps://192.168.1.1:7441/jDhFy9De5o41cpFH?enableSrtp"
-rtsp_2 = "rtsps://192.168.1.1:7441/9GLfkjp10gO3LCTv?enableSrtp"
-
-cap1 = cv2.VideoCapture(rtsp_1)
-cap2 = cv2.VideoCapture(rtsp_2)
-
-if not cap1.isOpened():
-    print("Error: Could not open stream 1.")
-if not cap2.isOpened():
-    print("Error: Could not open stream 2.")
-if not (cap1.isOpened() or cap2.isOpened()):
-    raise SystemExit
-
-window = "Dual RTSP"
-cv2.namedWindow(window, cv2.WINDOW_NORMAL)
-cv2.setWindowProperty(window, cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
-
-# Target height for each pane (adjust if you like)
-TARGET_H = 720
-FONT = cv2.FONT_HERSHEY_SIMPLEX
+RETRY_SECONDS = 60
+WINDOW_NAME = "RTSP Stream"
 
 
-def resize_keep_aspect(img, target_h):
-    h, w = img.shape[:2]
-    scale = target_h / float(h)
-    new_w = max(1, int(w * scale))
-    return cv2.resize(img, (new_w, target_h), interpolation=cv2.INTER_AREA)
+def log(msg: str) -> None:
+    print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] {msg}")
 
 
-def no_signal(width, height, label):
-    slate = np.zeros((height, width, 3), dtype=np.uint8)
-    text = f"{label}: No signal"
-    (tw, th), _ = cv2.getTextSize(text, FONT, 1.0, 2)
-    cv2.putText(slate, text, ((width - tw) // 2, (height + th) // 2), FONT, 1.0, (255, 255, 255), 2, cv2.LINE_AA)
-    return slate
+def open_capture(url: str):
+    # Prefer FFMPEG if available; fallback to default auto-detect
+    backend = getattr(cv2, "CAP_FFMPEG", 0)
+    cap = cv2.VideoCapture(url, backend)
+    return cap
 
 
-last1, last2 = None, None
+def display_stream(url: str):
+    while True:
+        cap = open_capture(url)
 
-while True:
-    ok1, f1 = cap1.read()
-    ok2, f2 = cap2.read()
+        if not cap.isOpened():
+            log(f"Error: Could not open RTSP stream. Retrying in {RETRY_SECONDS} seconds...")
+            cap.release()
+            time.sleep(RETRY_SECONDS)
+            continue
 
-    if ok1:
-        last1 = f1
-    if ok2:
-        last2 = f2
+        log("RTSP stream opened successfully.")
 
-    # If neither stream can provide a frame, bail
-    if last1 is None and last2 is None:
-        print("Error: Neither stream is providing frames.")
-        break
+        # Create window and force full screen
+        cv2.namedWindow(WINDOW_NAME, cv2.WINDOW_NORMAL)
+        cv2.setWindowProperty(WINDOW_NAME, cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
 
-    # Prepare frames (or slates) at a common height
-    if last1 is None:
-        f1r = resize_keep_aspect(no_signal(640, TARGET_H, "Stream 1"), TARGET_H)
-    else:
-        f1r = resize_keep_aspect(last1, TARGET_H)
+        while True:
+            ret, frame = cap.read()
 
-    if last2 is None:
-        f2r = resize_keep_aspect(no_signal(640, TARGET_H, "Stream 2"), TARGET_H)
-    else:
-        f2r = resize_keep_aspect(last2, TARGET_H)
+            # If the stream drops or a frame can't be read for any reason, break to retry
+            if not ret or frame is None:
+                log(f"Error: Could not read frame from stream. Retrying in {RETRY_SECONDS} seconds...")
+                break
 
-    # Concatenate side-by-side
-    combined = cv2.hconcat([f1r, f2r])
+            cv2.imshow(WINDOW_NAME, frame)
 
-    cv2.imshow(window, combined)
-    key = cv2.waitKey(1) & 0xFF
-    if key in (ord("q"), 27):  # q or ESC
-        break
+            key = cv2.waitKey(1) & 0xFF
+            if key == ord("q") or key == 27:  # 'q' or ESC to quit
+                log("Exit requested by user.")
+                cap.release()
+                cv2.destroyAllWindows()
+                return
 
-cap1.release()
-cap2.release()
-cv2.destroyAllWindows()
+        # Clean up before retrying
+        cap.release()
+        cv2.destroyAllWindows()
+        time.sleep(RETRY_SECONDS)
+
+
+if __name__ == "__main__":
+    try:
+        display_stream(rtsp_url)
+    except KeyboardInterrupt:
+        log("Interrupted by user. Exiting.")
+        cv2.destroyAllWindows()
