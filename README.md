@@ -1,4 +1,4 @@
-RTSP Fullscreen Viewer (OpenCV) — Dual-Stream
+# RTSP Fullscreen Viewer - Dual-Stream
 
 A tiny Python script that opens one or TWO RTSP/RTSPS video streams in a single **fullscreen** window using OpenCV. 
 Each stream reconnects automatically if it drops, and you can **quit** with `q` or `Esc`. 
@@ -13,8 +13,6 @@ The viewer uses a custom black canvas for letterboxing so there are no white gut
 - **Background reader threads** for smooth playback while the UI stays responsive.
 - **Black letterbox background** (our own canvas) so fullscreen margins aren’t white.
 - **Status overlays** on each tile (e.g., `LIVE`, `FROZEN`, `connecting...`).
-- **ASCII-safe labels**: overlays use `-` instead of the Unicode em dash `—` to avoid `???` with OpenCV’s built-in fonts.
-  - If you want Unicode text, use `opencv-contrib-python` with FreeType or render with PIL.
 
 ## Features
 - Prefers the **FFmpeg** backend (`cv2.CAP_FFMPEG`) when available for robust RTSP handling.
@@ -39,8 +37,8 @@ pip install opencv-python numpy
  
 ## Configure
 In the script, set:
-- `rtsp_url_1` / `rtsp_url_2` – your two RTSP/RTSPS URLs
-- `name_left` / `name_right` – overlay titles for each camera
+- `rtsp_url_1` / `rtsp_url_2` - your two RTSP/RTSPS URLs
+- `name_left` / `name_right` - overlay titles for each camera
 - `RETRY_SECONDS` – reconnect delay (default 60s)
 - `TARGET_HEIGHT` – per-tile height before mosaicking (bigger = larger tiles)
 
