@@ -15,7 +15,7 @@ FONT = CONFIG["FONT"]
 
 
 # ========= MAIN DISPLAY =========
-def display_two_streams(url_left: str, url_right: str, name_left="FRONT", name_right="BACK"):
+def display_streams(url_left: str, url_right: str, name_left="FRONT", name_right="BACK"):
     stream_l = RTSPStream(url_left, name_left)
     stream_r = RTSPStream(url_right, name_right)
 
@@ -60,7 +60,7 @@ def display_two_streams(url_left: str, url_right: str, name_left="FRONT", name_r
             cv2.imshow(WINDOW_NAME, out)
 
             key = cv2.waitKey(1) & 0xFF
-            if key == ord("q") or key == 27:  # q or ESC
+            if key == ord("q") or key == 27:
                 helpers.log("Exit requested by user.")
                 break
 
@@ -73,4 +73,4 @@ def display_two_streams(url_left: str, url_right: str, name_left="FRONT", name_r
 
 
 if __name__ == "__main__":
-    display_two_streams(rtsp_url_1, rtsp_url_2, "FRONT", "BACK")
+    display_streams(rtsp_url_1, rtsp_url_2, "FRONT", "BACK")

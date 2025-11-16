@@ -28,25 +28,13 @@ The viewer uses a custom black canvas for letterboxing so there are no white gut
 - **OpenCV** (e.g., `opencv-python`)
 - OS GUI support for OpenCV windows (e.g., X11 on Linux, Quartz on macOS, Win32 on Windows)
 - (Recommended) **FFmpeg** installed on your system for broader codec/RTSP support
-- (Optional) **opencv-contrib-python** if you want TrueType font rendering (Unicode) via FreeType
 
 ## Install
 ```bash
-# optional but recommended: create a virtual environment
-python -m venv .venv
-# macOS/Linux
-source .venv/bin/activate
-# Windows (PowerShell)
-.venv\Scripts\Activate.ps1
-
-# install python deps (choose one)
 # 1) from requirements.txt
 pip install -r requirements.txt
 # 2) or directly
 pip install opencv-python numpy
-
-# optional: for Unicode TrueType fonts via FreeType
-pip install opencv-contrib-python
 ```
  
 ## Configure
@@ -56,21 +44,7 @@ In the script, set:
 - `RETRY_SECONDS` – reconnect delay (default 60s)
 - `TARGET_HEIGHT` – per-tile height before mosaicking (bigger = larger tiles)
 
-## Run
-```bash
-python your_script.py
-```
 
 ## Controls
 - `q` or `Esc` – quit
 - (Optional) To make the window resizable instead of fullscreen, remove the line that sets `WND_PROP_FULLSCREEN` in the script.
-
-## Notes
-- The viewer uses `getWindowImageRect` (OpenCV 4+) to detect the true fullscreen size once the window is visible, then draws onto a black canvas of that exact size. 
-  If your build lacks this API, the code falls back to a sane default size for the canvas; the background remains black either way.
-- Overlays intentionally use ASCII `-`. If your editor auto-substitutes an em dash `—`, you may see `???` on screen—switch back to `-` or install `opencv-contrib-python`/FreeType.
-
-## Troubleshooting
-- **White gutters / margins**: The script now renders onto a black canvas the size of the fullscreen window; this removes white gutters. If you still see white, ensure your OpenCV is 4.x and NumPy is installed.
-- **Choppy playback**: Lower `TARGET_HEIGHT` to reduce per-frame resize cost; ensure network stability and that FFmpeg is available.
-- **No video / intermittent**: Check credentials/URL, camera profile, and that your OpenCV build includes FFmpeg. The script will log and retry automatically.
